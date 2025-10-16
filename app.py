@@ -1,22 +1,19 @@
 # app.py
-import os
+import streamlit as st
+import pandas as pd
+import numpy as np
 import threading
 import time
 from datetime import datetime
-
-import pandas as pd
-import numpy as np
+import os
 import requests
-import streamlit as st
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
 # -----------------------------
 # Telegram Bot Settings
 # -----------------------------
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    st.error("BOT_TOKEN environment variable not set.")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Read from Render environment
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
 
 # -----------------------------
@@ -52,8 +49,7 @@ def fetch_signals_from_telegram():
     global LAST_UPDATE_ID
     try:
         res = requests.get(API_URL, timeout=10).json()
-    except Exception as e:
-        print("Telegram fetch error:", e)
+    except:
         return []
 
     signals = []
@@ -68,7 +64,6 @@ def fetch_signals_from_telegram():
 
         message = update.get('message', {})
         text = message.get('text', '')
-        # Example parsing format
         if "Coin:" in text and "Color:" in text and "Number:" in text and "Quantity:" in text:
             coin = text.split("Coin:")[1].split("Color:")[0].strip()
             color = text.split("Color:")[1].split("Number:")[0].strip()
@@ -279,14 +274,12 @@ elif choice == "Heatmaps":
         matrix = np.zeros((len(colors_list), len(numbers_list)))
         trends = {}
 
-        # Compute probabilities & recent trends
         for i, color in enumerate(colors_list):
             for j, number in enumerate(numbers_list):
                 subset = df[(df['color']==color) & (df['number']==number)]
                 matrix[i,j] = subset['verified'].mean()*100 if len(subset)>0 else 0
                 trends[(color, number)] = subset['verified'].tail(5).tolist()
 
-        # Heatmap
         fig = go.Figure()
         for i, color in enumerate(colors_list):
             for j, number in enumerate(numbers_list):
