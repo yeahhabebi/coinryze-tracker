@@ -1,33 +1,38 @@
-# Python cache
+# Python cache and environment files
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 *.pyd
-*.pyc
-
-# Virtual environment
-venv/
+*.env
+*.venv
 .env
-.env.*
+.venv
 
-# Streamlit cache
-.streamlit/
+# Jupyter / IPython
+.ipynb_checkpoints
 
-# CSV data files (auto-created by app)
-verified_signals.csv
-historical_signals.csv
-periods.csv
-last_update_id.txt
+# Logs
+*.log
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# Render / deployment files
+*.egg-info/
+*.egg
 
-# IDE / editor files
+# Streamlit temporary files
+.streamlit/
+
+# CSV / data files (auto-generated)
+verified_signals.csv
+historical_signals.csv
+periods.csv
+last_update_id.txt
+
+# VSCode settings
 .vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
+
+# Mac system files
+*.DS_Store
