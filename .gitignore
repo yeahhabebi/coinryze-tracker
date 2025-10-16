@@ -1,16 +1,33 @@
-# Ignore auto-generated CSV/TXT files
-*.csv
-*.txt
-
-# Python cache and virtual environment
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-env/
-venv/
-.venv/
+*.pyc
 
-# Streamlit cache and logs
+# Virtual environment
+venv/
+.env
+.env.*
+
+# Streamlit cache
 .streamlit/
+
+# CSV data files (auto-created by app)
+verified_signals.csv
+historical_signals.csv
+periods.csv
+last_update_id.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
 *.log
+
+# IDE / editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
