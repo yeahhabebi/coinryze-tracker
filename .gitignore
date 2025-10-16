@@ -1,40 +1,15 @@
-# Python cache files
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-
-# Virtual environments
-venv/
 env/
-.venv/
+venv/
+*.env
 
-# Jupyter / IPython
-.ipynb_checkpoints/
+# Streamlit / Render
+*.csv
+*.txt
 
-# Streamlit
-.streamlit/
-
-# OS files
+# OS
 .DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# CSV / data files (auto-generated)
-verified_signals.csv
-historical_signals.csv
-periods.csv
-last_update_id.txt
-
-# IDE settings
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
-
-# Pip / package cache
-*.egg-info/
-dist/
-build/
