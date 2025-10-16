@@ -1,8 +1,14 @@
-streamlit==1.39.0
-streamlit-autorefresh
-pandas
-numpy
-requests
-plotly
-boto3
-python-dotenv
+
+---
+
+### **4️⃣ `requirements.txt`**
+```txt
+telethon==1.27.1
+boto3==1.30.24
+python-dotenv==1.0.0
+pandas==2.1.0
+numpy==1.26.0
+streamlit==1.26.0
+plotly==5.19.0
+streamlit-autorefresh==0.0.4
+requests==2.32.0
