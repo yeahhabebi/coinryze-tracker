@@ -2,9 +2,12 @@ services:
   - type: web
     name: coinryze-tracker
     env: python
+    pythonVersion: "3.11"
     plan: free
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT
+    buildCommand: |
+      pip install --upgrade pip wheel setuptools
+      pip install -r requirements.txt --prefer-binary
+    startCommand: streamlit run app.py
     envVars:
       - key: BOT_TOKEN
         value: 8320822050:AAGk4YmnvA5sqIWK5RcYodiCe9PNLp8bNUA
