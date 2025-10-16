@@ -1,15 +1,11 @@
-# Python
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 *.pyd
-env/
-venv/
-*.env
-
-# Streamlit / Render
+.env
+.venv/
+*.sqlite3
+.DS_Store
+*.log
 *.csv
 *.txt
-
-# OS
-.DS_Store
