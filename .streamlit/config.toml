@@ -1,0 +1,6 @@
+[server]
+enableCORS = true
+enableXsrfProtection = false
+headless = true
+port = $PORT
+address = "0.0.0.0"
