@@ -13,7 +13,7 @@ from streamlit_autorefresh import st_autorefresh
 # -----------------------------
 # Telegram Bot Settings
 # -----------------------------
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Use environment variable
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
 
 # -----------------------------
@@ -31,7 +31,7 @@ if os.path.exists(HISTORICAL_FILE):
     hist_df = pd.read_csv(HISTORICAL_FILE)
     hist_df['result'] = hist_df['result'].astype(bool)
 else:
-    hist_df = pd.DataFrame(columns=["timestamp", "coin", "color", "number", "direction", "result", "quantity"])
+    hist_df = pd.DataFrame(columns=["timestamp","coin","color","number","direction","result","quantity"])
 
 # -----------------------------
 # Load last processed Telegram update_id
@@ -64,7 +64,7 @@ def fetch_signals_from_telegram():
 
         message = update.get('message', {})
         text = message.get('text', '')
-        # Example parsing format
+
         if "Coin:" in text and "Color:" in text and "Number:" in text and "Quantity:" in text:
             coin = text.split("Coin:")[1].split("Color:")[0].strip()
             color = text.split("Color:")[1].split("Number:")[0].strip()
@@ -97,7 +97,7 @@ def verify_signal(signal):
     prob_correct = coin_hist["result"].mean() if len(coin_hist) > 0 else 0.5
 
     signal["verified"] = np.random.rand() < prob_correct
-    signal["confidence"] = round(prob_correct * 100, 2)
+    signal["confidence"] = round(prob_correct*100,2)
     return signal
 
 def assign_period_id():
@@ -115,7 +115,7 @@ def save_signal(signal):
         df.to_csv(VERIFIED_FILE, index=False)
     else:
         df.to_csv(VERIFIED_FILE, mode="a", header=False, index=False)
-    
+
     hist_update = pd.DataFrame([{
         "timestamp": signal["timestamp"],
         "coin": signal["coin"],
@@ -170,7 +170,7 @@ st_autorefresh(interval=60*1000, key="datarefresh")
 st.set_page_config(page_title="CoinRyze Tracker", layout="wide")
 st.title("💹 CoinRyze Color/Number Signal Tracker Terminal")
 
-menu = ["Live Dashboard", "Signal Analytics", "Next Best Trade", "Heatmaps"]
+menu = ["Live Dashboard","Signal Analytics","Next Best Trade","Heatmaps"]
 choice = st.sidebar.selectbox("Menu", menu)
 
 # -----------------------------
@@ -187,7 +187,7 @@ if choice == "Live Dashboard":
         def color_rows(row):
             if row['verified']:
                 return ['background-color: #b6fcd5']*len(row)
-            elif row['confidence'] >= 75:
+            elif row['confidence']>=75:
                 return ['background-color: #fef3b3']*len(row)
             else:
                 return ['background-color: #fcb6b6']*len(row)
@@ -271,34 +271,32 @@ elif choice == "Heatmaps":
         df["verified"] = df["verified"].astype(bool)
 
         colors_list = df['color'].unique().tolist()
-        numbers_list = sorted(df['number'].unique().tolist(), key=lambda x: int(x))
+        numbers_list = sorted(df['number'].unique().tolist(), key=lambda x:int(x))
         matrix = np.zeros((len(colors_list), len(numbers_list)))
         trends = {}
 
-        # Compute probabilities & recent trends
-        for i, color in enumerate(colors_list):
-            for j, number in enumerate(numbers_list):
+        for i,color in enumerate(colors_list):
+            for j,number in enumerate(numbers_list):
                 subset = df[(df['color']==color) & (df['number']==number)]
                 matrix[i,j] = subset['verified'].mean()*100 if len(subset)>0 else 0
-                trends[(color, number)] = subset['verified'].tail(5).tolist()
+                trends[(color,number)] = subset['verified'].tail(5).tolist()
 
-        # Heatmap
         fig = go.Figure()
-        for i, color in enumerate(colors_list):
-            for j, number in enumerate(numbers_list):
+        for i,color in enumerate(colors_list):
+            for j,number in enumerate(numbers_list):
                 val = matrix[i,j]
-                mini_trend = trends[(color, number)]
+                mini_trend = trends[(color,number)]
                 fig.add_trace(go.Scatter(
-                    x=[j], y=[i], 
+                    x=[j], y=[i],
                     mode='markers+text',
-                    marker=dict(size=60, color=val, colorscale="RdYlGn", showscale=False),
+                    marker=dict(size=60,color=val,colorscale="RdYlGn",showscale=False),
                     text="".join(["🟢" if v else "🔴" for v in mini_trend]),
                     textposition="middle center"
                 ))
-        fig.update_yaxes(autorange="reversed", tickvals=list(range(len(colors_list))), ticktext=colors_list)
-        fig.update_xaxes(tickvals=list(range(len(numbers_list))), ticktext=numbers_list)
-        fig.update_layout(height=600, width=900, xaxis_title="Number", yaxis_title="Color")
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_yaxes(autorange="reversed",tickvals=list(range(len(colors_list))),ticktext=colors_list)
+        fig.update_xaxes(tickvals=list(range(len(numbers_list))),ticktext=numbers_list)
+        fig.update_layout(height=600,width=900,xaxis_title="Number",yaxis_title="Color")
+        st.plotly_chart(fig,use_container_width=True)
     else:
         st.info("No verified signals yet.")
 
