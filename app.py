@@ -250,4 +250,58 @@ elif choice=="Next Best Trade":
         number_df = pd.DataFrame({
             "Number": number_prob.index,
             "Win Probability": (number_prob.values*100).round(2),
-            "Badge": [number_bad
+            "Badge": [number_badge(n) for n in number_prob.index]
+        })
+
+        st.markdown("### 🔴 Color Ranking")
+        st.table(color_df[["Badge","Color","Win Probability"]])
+
+        st.markdown("### 🔢 Number Ranking")
+        st.table(number_df[["Badge","Number","Win Probability"]])
+    else:
+        st.info("No verified signals yet.")
+
+# -----------------------------
+# Heatmaps with Mini Trends
+# -----------------------------
+elif choice=="Heatmaps":
+    st.subheader("🌈 CoinRyze-Style Heatmap: Color & Number Win Probabilities + Mini Trend")
+    if os.path.exists(VERIFIED_FILE):
+        df = pd.read_csv(VERIFIED_FILE)
+        df["verified"] = df["verified"].astype(bool)
+
+        colors_list = df['color'].unique().tolist()
+        numbers_list = sorted(df['number'].unique().tolist(),key=lambda x:int(x))
+        matrix = np.zeros((len(colors_list),len(numbers_list)))
+        trends = {}
+
+        for i,color in enumerate(colors_list):
+            for j,number in enumerate(numbers_list):
+                subset = df[(df['color']==color)&(df['number']==number)]
+                matrix[i,j] = subset['verified'].mean()*100 if len(subset)>0 else 0
+                trends[(color,number)] = subset['verified'].tail(5).tolist()
+
+        fig = go.Figure()
+        for i,color in enumerate(colors_list):
+            for j,number in enumerate(numbers_list):
+                val = matrix[i,j]
+                mini_trend = trends[(color,number)]
+                fig.add_trace(go.Scatter(
+                    x=[j],y=[i],
+                    mode='markers+text',
+                    marker=dict(size=60,color=val,colorscale="RdYlGn",showscale=False),
+                    text="".join(["🟢" if v else "🔴" for v in mini_trend]),
+                    textposition="middle center"
+                ))
+        fig.update_yaxes(autorange="reversed",tickvals=list(range(len(colors_list))),ticktext=colors_list)
+        fig.update_xaxes(tickvals=list(range(len(numbers_list))),ticktext=numbers_list)
+        fig.update_layout(height=600,width=900,xaxis_title="Number",yaxis_title="Color")
+        st.plotly_chart(fig,use_container_width=True)
+    else:
+        st.info("No verified signals yet.")
+
+# -----------------------------
+# Footer
+# -----------------------------
+st.markdown("---")
+st.markdown("🔄 Background worker running ✅ Real-time CoinRyze-style terminal with self-learning verification, high-confidence alerts, period IDs, prediction confidence, quantity trends, next best trade ranking, colored badges/icons, and color/number heatmap with mini trends.")
