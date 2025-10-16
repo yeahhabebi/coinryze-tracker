@@ -1,12 +1,10 @@
 services:
   - type: web
-    name: coinryze-analyzer
+    name: coinryze-tracker
     env: python
     plan: free
-    buildCommand: |
-      pip install --upgrade pip setuptools wheel
-      pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT
     envVars:
       - key: BOT_TOKEN
-        sync: false
+        value: 8320822050:AAGk4YmnvA5sqIWK5RcYodiCe9PNLp8bNUA
