@@ -1,7 +1,8 @@
-boto3
-streamlit
+streamlit==1.39.0
+streamlit-autorefresh
 pandas
 numpy
 requests
 plotly
-streamlit_autorefresh
+boto3
+python-dotenv
