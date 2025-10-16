@@ -13,11 +13,11 @@ from streamlit_autorefresh import st_autorefresh
 # -----------------------------
 # Telegram Bot Settings
 # -----------------------------
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Use Render secret
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
 
 # -----------------------------
-# File Paths
+# File Paths (local, for Render simplicity)
 # -----------------------------
 VERIFIED_FILE = "verified_signals.csv"
 HISTORICAL_FILE = "historical_signals.csv"
@@ -48,12 +48,16 @@ else:
 def fetch_signals_from_telegram():
     global LAST_UPDATE_ID
     try:
-        res = requests.get(API_URL, timeout=10).json()
-    except:
+        res = requests.get(API_URL, timeout=10)
+        res.raise_for_status()
+        data = res.json()
+        print(f"[Telegram] Fetched {len(data.get('result',[]))} updates")
+    except Exception as e:
+        print(f"[Telegram] Fetch error: {e}")
         return []
 
     signals = []
-    for update in res.get('result', []):
+    for update in data.get('result', []):
         update_id = update['update_id']
         if LAST_UPDATE_ID is not None and update_id <= LAST_UPDATE_ID:
             continue
@@ -65,13 +69,14 @@ def fetch_signals_from_telegram():
         message = update.get('message', {})
         text = message.get('text', '')
         if "Coin:" in text and "Color:" in text and "Number:" in text and "Quantity:" in text:
-            coin = text.split("Coin:")[1].split("Color:")[0].strip()
-            color = text.split("Color:")[1].split("Number:")[0].strip()
-            number = text.split("Number:")[1].split("Quantity:")[0].strip()
-            quantity_str = text.split("Quantity:")[1].split()[0]
             try:
+                coin = text.split("Coin:")[1].split("Color:")[0].strip()
+                color = text.split("Color:")[1].split("Number:")[0].strip()
+                number = text.split("Number:")[1].split("Quantity:")[0].strip()
+                quantity_str = text.split("Quantity:")[1].split()[0]
                 quantity = float(quantity_str.replace("x",""))
-            except:
+            except Exception as e:
+                print(f"[Telegram] Parsing error: {e}, text: {text}")
                 quantity = 1.0
             signals.append({
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -154,6 +159,7 @@ def background_worker():
             print("Worker error:", e)
             time.sleep(60)
 
+# Start worker once per session
 if "worker_started" not in st.session_state:
     st.session_state.worker_started = True
     threading.Thread(target=background_worker, daemon=True).start()
@@ -303,4 +309,4 @@ elif choice == "Heatmaps":
 # Footer
 # -----------------------------
 st.markdown("---")
-st.markdown("🔄 Background worker running ✅ Real-time CoinRyze-style terminal with self-learning verification, high-confidence alerts, period IDs, prediction confidence, quantity trends, next best trade ranking, colored badges/icons, and color/number heatmap with mini trends.")
+st.markdown("🔄 Background worker running ✅ Real-time CoinRyze terminal with self-learning verification, high-confidence alerts, period IDs, prediction confidence, quantity trends, next best trade ranking, colored badges/icons, and heatmap with mini trends.")
