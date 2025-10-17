@@ -1,19 +1,19 @@
 # CoinRyze Tracker
 
-💹 CoinRyze Color/Number Signal Tracker (ETH 60s)  
-
-Features:
-- Live dashboard with color-coded signals  
-- Signal analytics & accuracy metrics  
-- Next Best Trade prediction  
-- Heatmaps with mini trends  
-- Cloudflare R2 storage for all CSVs  
-- Personal Telegram login via TELETHON_SESSION  
-- High-confidence alerts  
+Real-time ETH 60s Color/Number signal tracker with analytics, heatmaps, and Telegram integration. Uses Cloudflare R2 for data storage and Streamlit for dashboards.
 
 ## Setup
 
-1. Clone the repo:  
-```bash
-git clone <YOUR_REPO_URL>
-cd coinryze-tracker
+1. Clone repo
+2. Add `.env` or Render Environment Variables:
+   - BOT_TOKEN
+   - R2_ACCESS_KEY_ID
+   - R2_SECRET_ACCESS_KEY
+   - R2_BUCKET
+   - R2_ENDPOINT
+   - API_ID
+   - API_HASH
+   - TELETHON_SESSION
+3. Deploy on Render:
+   - Build Command: `pip install --upgrade pip && pip install -r requirements.txt`
+   - Start Command: `streamlit run app.py`
