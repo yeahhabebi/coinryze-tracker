@@ -1,4 +1,0 @@
-timestamp,coin,color,number,direction,quantity,verified,confidence,period_id
-2025-10-17 00:00:00,ETH,Red,1,Red,1.0,True,80.0,1
-2025-10-17 00:01:00,ETH,Green,2,Green,2.0,False,45.0,2
-2025-10-17 00:02:00,ETH,Blue,3,Blue,1.5,True,70.0,3
