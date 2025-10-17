@@ -1,14 +1,7 @@
-# Core
 streamlit==1.26.0
 numpy==1.26.4
-pandas==2.3.4
+pandas==2.3.3
 plotly==5.22.0
-
-# AWS/Cloudflare R2
 boto3==1.26.160
-
-# Telegram
 telethon==1.27.0
-
-# Streamlit utilities
 streamlit-autorefresh==0.1.3
