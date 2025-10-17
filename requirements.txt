@@ -1,7 +1,7 @@
 streamlit==1.26.0
 pandas==2.2.3
 numpy==1.26.4
-boto3==1.34.146
 plotly==5.22.0
 streamlit-autorefresh==1.0.1
+boto3==1.34.146
 telethon==1.33.1
