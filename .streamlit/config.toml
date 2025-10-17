@@ -1,5 +1,0 @@
-[server]
-enableCORS = true
-enableXsrfProtection = false
-headless = true
-address = "0.0.0.0"
