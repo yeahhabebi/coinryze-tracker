@@ -1,20 +1,34 @@
+from telethon import TelegramClient
+from telethon.sessions import StringSession
 import os
-from telethon import TelegramClient, events
-from dotenv import load_dotenv
-
-load_dotenv()
+import pandas as pd
+from datetime import datetime
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+TELETHON_SESSION = os.getenv("TELETHON_SESSION")
+TARGET_CHAT = os.getenv("TARGET_CHAT")
 
-client = TelegramClient("coinryze_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+client = TelegramClient(StringSession(TELETHON_SESSION), API_ID, API_HASH)
+client.start()
 
-@client.on(events.NewMessage(chats="@CoinryzeColor"))
-async def handler(event):
-    text = event.raw_text
-    print(f"New message: {text}")
-
-if __name__ == "__main__":
-    print("Telegram listener started...")
-    client.run_until_disconnected()
+def fetch_signals(limit=20):
+    signals = []
+    updates = client.get_messages(TARGET_CHAT, limit=limit)
+    for message in updates:
+        text = message.text or ""
+        if "Trade:" in text and "Recommended quantity:" in text:
+            try:
+                color = text.split("Trade:")[1].split()[0]
+                quantity = float(text.split("Recommended quantity:")[1].split()[0].replace("x",""))
+                signals.append({
+                    "timestamp": datetime.now(),
+                    "coin":"ETH",
+                    "color":color,
+                    "number":"1",
+                    "direction":color,
+                    "quantity":quantity
+                })
+            except:
+                continue
+    return signals
