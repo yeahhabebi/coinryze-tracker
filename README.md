@@ -1,16 +1,19 @@
-# CoinRyze Tracker T-API
+# CoinRyze Tracker
 
-This is a **learning/demo version** of a CoinRyze-style Telegram signal tracker.
+💹 CoinRyze Color/Number Signal Tracker (ETH 60s)  
 
-## Features
-- Real-time signal listener from Telegram using **Telethon**.
-- Signal verification based on historical data.
-- Dashboard and analytics (accuracy, top colors/numbers).
-- CSV persistence (verified signals, historical signals, periods).
+Features:
+- Live dashboard with color-coded signals  
+- Signal analytics & accuracy metrics  
+- Next Best Trade prediction  
+- Heatmaps with mini trends  
+- Cloudflare R2 storage for all CSVs  
+- Personal Telegram login via TELETHON_SESSION  
+- High-confidence alerts  
 
 ## Setup
 
-1. Clone this repository
+1. Clone the repo:  
 ```bash
-git clone https://github.com/yourusername/coinryze-tracker-tapi.git
-cd coinryze-tracker-tapi
+git clone <YOUR_REPO_URL>
+cd coinryze-tracker
