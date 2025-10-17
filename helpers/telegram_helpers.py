@@ -1,1 +1,0 @@
-# Telegram helper functions
