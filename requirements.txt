@@ -1,6 +1,6 @@
-streamlit==1.26.0
-numpy==1.25.0
-pandas==2.2.3
+streamlit==1.25.0
+pandas==2.3.3
+numpy==1.26.4
+boto3==1.30.24
+telethon==1.27.3
 plotly==5.22.0
-boto3
-telethon
