@@ -1,4 +1,5 @@
-streamlit==1.26.0
-telethon==1.34.0
-boto3==1.35.4
-pandas==2.1.1
+pandas
+telethon
+boto3
+botocore
+streamlit
