@@ -1,8 +1,8 @@
-streamlit==1.29.0
-pandas==2.5.2
-pyrogram==2.0.37
-tgcrypto==1.5.3
-CloudFlare==2.9.3
-requests==2.32.0
-numpy==1.26.0
-plotly==5.16.0
+streamlit==1.28.0
+pandas==2.3.3
+pyrogram==2.0.34
+tgcrypto==1.2.4
+cloudflare==3.8.0
+requests==2.31.0
+numpy==1.27.4
+plotly==5.21.0
