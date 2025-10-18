@@ -2,7 +2,7 @@ streamlit==1.28.0
 pandas==2.3.3
 pyrogram==2.0.34
 tgcrypto==1.2.4
-cloudflare==3.8.0
+boto3==1.31.5
 requests==2.31.0
 numpy==1.27.4
 plotly==5.21.0
