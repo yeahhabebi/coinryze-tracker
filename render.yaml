@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: coinryze-tracker
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "./start.sh"
+    plan: free
