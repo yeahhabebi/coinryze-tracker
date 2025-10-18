@@ -3,11 +3,10 @@ import time
 import threading
 import pandas as pd
 import numpy as np
-import requests
 import streamlit as st
 import plotly.express as px
+import boto3
 from pyrogram import Client, filters
-from cloudflare import CloudFlare
 
 # ===========================
 # Environment Variables
@@ -21,10 +20,13 @@ R2_BUCKET = os.getenv("R2_BUCKET")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 
 # ===========================
-# Telegram Listener
+# Signals storage
 # ===========================
 signals_df = pd.DataFrame(columns=["bot", "signal", "verified", "timestamp"])
 
+# ===========================
+# Telegram Listener
+# ===========================
 def start_telegram_listener(api_id, api_hash, session_name):
     app = Client(session_name, api_id=int(api_id), api_hash=api_hash)
 
@@ -44,17 +46,20 @@ def start_telegram_listener(api_id, api_hash, session_name):
     app.run()
 
 # ===========================
-# Cloudflare R2 Sync
+# R2 Upload with retries (S3 compatible)
 # ===========================
 def upload_to_r2(filename, data, retries=3):
-    cf = CloudFlare(email="", token=R2_SECRET)  # token auth
+    session = boto3.session.Session()
+    s3 = session.client(
+        's3',
+        endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_KEY_ID,
+        aws_secret_access_key=R2_SECRET,
+    )
     for attempt in range(retries):
         try:
-            resp = cf.accounts.r2.put(
-                R2_BUCKET, filename, data=data.encode("utf-8")
-            )
-            if resp:
-                return True
+            s3.put_object(Bucket=R2_BUCKET, Key=filename, Body=data.encode("utf-8"))
+            return True
         except Exception as e:
             print(f"R2 upload failed, retry {attempt+1}: {e}")
             time.sleep(2)
@@ -71,10 +76,9 @@ def backup_signals():
 # ===========================
 # Start Telegram Threads
 # ===========================
-for i, (api_id, api_hash, session) in enumerate(zip(TELEGRAM_API_IDS, TELEGRAM_API_HASHES, TELEGRAM_SESSIONS)):
+for api_id, api_hash, session in zip(TELEGRAM_API_IDS, TELEGRAM_API_HASHES, TELEGRAM_SESSIONS):
     threading.Thread(target=start_telegram_listener, args=(api_id, api_hash, session), daemon=True).start()
 
-# Start backup thread
 threading.Thread(target=backup_signals, daemon=True).start()
 
 # ===========================
@@ -90,14 +94,12 @@ while True:
     if df_copy.empty:
         placeholder.text("No data yet. Waiting for signals...")
     else:
-        # Rolling accuracy (example)
         df_copy["verified_numeric"] = df_copy["verified"].astype(int)
         acc = df_copy.groupby("bot")["verified_numeric"].mean().reset_index()
         acc.columns = ["Bot", "Rolling Accuracy"]
         fig = px.bar(acc, x="Bot", y="Rolling Accuracy", range_y=[0,1], text_auto=True)
         placeholder.plotly_chart(fig, use_container_width=True)
 
-        # Heatmap example
         heatmap_data = pd.crosstab(df_copy["bot"], df_copy["signal"])
         fig2 = px.imshow(heatmap_data, text_auto=True, aspect="auto")
         st.plotly_chart(fig2, use_container_width=True)
