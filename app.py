@@ -1,4 +1,3 @@
-# app.py
 import asyncio
 import threading
 import random
@@ -7,23 +6,25 @@ from datetime import datetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 import streamlit as st
-import boto3  # Cloudflare R2 compatible with S3 API
+import pandas as pd
+import boto3
+from io import BytesIO
 
 # =======================
 # Telegram Config
 # =======================
-API_IDS = [11345160]  # support multi-bot later
+API_IDS = [11345160]  # multi-bot ready
 API_HASHES = ["2912d1786520d56f2b0df8be2f0a8616"]
-STRING_SESSIONS = ["YOUR_STRING_SESSION_HERE"]
-BOT_NAMES = ["Tisha"]  # name for display
+STRING_SESSIONS = ["YOUR_STRING_SESSION_HERE"]  # replace with your string session
+BOT_NAMES = ["Tisha"]
 
 # =======================
 # Cloudflare R2 Config
 # =======================
-R2_KEY_ID = "YOUR_R2_KEY_ID"
-R2_SECRET = "YOUR_R2_SECRET"
-R2_BUCKET = "coinryze-backup"
-R2_ENDPOINT = "https://<account_id>.r2.cloudflarestorage.com"
+R2_KEY_ID = "7423969d6d623afd9ae23258a6cd2839"
+R2_SECRET = "dd858bf600c0d8e63cd047d128b46ad6df0427daef29f57c312530da322fc63c"
+R2_BUCKET = "coinryze-analyzer"
+R2_ENDPOINT = "https://coinryze-analyzer.6d266c53f2f03219a25de8f12c50bc3b.r2.cloudflarestorage.com"
 
 r2 = boto3.client(
     "s3",
@@ -48,7 +49,7 @@ if "accuracy" not in st.session_state:
     st.session_state.accuracy = {}  # {bot_name: [True, False,...]}
 
 # =======================
-# Helpers
+# Helper Functions
 # =======================
 def get_color(sender):
     if sender not in st.session_state.colors:
@@ -80,7 +81,7 @@ def backup_to_r2(data, filename=None):
     r2.put_object(Bucket=R2_BUCKET, Key=filename, Body=data.encode())
 
 def verify_signal(text):
-    # Dummy verification: True if contains "WIN", else False
+    # Replace this logic with your real CoinRyze verification
     return "WIN" in text.upper()
 
 def update_accuracy(bot_name, verified):
@@ -92,6 +93,7 @@ def update_accuracy(bot_name, verified):
 # Telegram Listeners
 # =======================
 clients = []
+
 for i in range(len(API_IDS)):
     client = TelegramClient(StringSession(STRING_SESSIONS[i]), API_IDS[i], API_HASHES[i])
     clients.append(client)
@@ -127,37 +129,57 @@ if not st.session_state.thread_started:
     st.session_state.thread_started = True
 
 # =======================
-# Streamlit UI
+# Streamlit Dashboard
 # =======================
-st.set_page_config(page_title="📊 Coinryze Signals Dashboard", layout="wide")
-st.title("📊 Coinryze Signals Dashboard")
+st.set_page_config(page_title="📊 CoinRyze Signals Dashboard", layout="wide")
+st.title("📊 CoinRyze Signals Dashboard")
 st.subheader("Live Telegram signals, verification & analytics")
 
+# Containers
 chat_container = st.container()
 leaderboard_container = st.container()
 heatmap_container = st.container()
+accuracy_chart_container = st.container()
 
-# Auto-refresh loop
-while True:
+# Auto-refresh with Streamlit rerun
+def refresh_dashboard():
+    # Chat view
     with chat_container:
         st.markdown("### Live Chat")
         for msg in st.session_state.messages[-50:]:
             st.markdown(format_message(msg), unsafe_allow_html=True)
 
+    # Leaderboard
     with leaderboard_container:
         st.markdown("### Bot Accuracy Leaderboard")
+        leaderboard = []
         for bot, results in st.session_state.accuracy.items():
             total = len(results)
-            if total > 0:
-                acc = sum(results)/total*100
-                st.markdown(f"{bot}: {acc:.2f}% ({total} signals)")
+            acc = (sum(results)/total*100) if total>0 else 0
+            leaderboard.append({"Bot": bot, "Accuracy": acc, "Signals": total})
+            st.markdown(f"{bot}: {acc:.2f}% ({total} signals)")
+        if leaderboard:
+            df_board = pd.DataFrame(leaderboard).sort_values(by="Accuracy", ascending=False)
+            st.dataframe(df_board)
 
-    # Dummy heatmap display
+    # Heatmap
     with heatmap_container:
         st.markdown("### Signal Verification Heatmap")
         for bot, results in st.session_state.accuracy.items():
             verified_count = sum(results)
             st.markdown(f"{bot}: " + "🟩"*verified_count + "🟥"*(len(results)-verified_count))
 
+    # Accuracy trend chart
+    with accuracy_chart_container:
+        st.markdown("### Accuracy Trend per Bot")
+        for bot, results in st.session_state.accuracy.items():
+            df_trend = pd.DataFrame({"Verified": results})
+            if not df_trend.empty:
+                df_trend['Cumulative Accuracy'] = df_trend['Verified'].expanding().mean()*100
+                st.line_chart(df_trend['Cumulative Accuracy'], use_container_width=True)
+
+# Auto-refresh loop
+while True:
+    refresh_dashboard()
     time.sleep(2)
     st.experimental_rerun()
