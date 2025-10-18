@@ -1,2 +1,3 @@
 streamlit==1.30.0
 telethon==1.34.0
+boto3==1.26.250
