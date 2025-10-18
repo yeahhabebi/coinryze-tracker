@@ -1,143 +1,112 @@
-# app.py
 import os
 import asyncio
-import re
-from datetime import datetime
 import json
-import aiohttp
-import streamlit as st
-from telethon import TelegramClient, events
+from datetime import datetime
+from dotenv import load_dotenv
+from telethon import TelegramClient, events, errors
 from telethon.sessions import StringSession
-from threading import Thread
-from queue import Queue
+import boto3
+import streamlit as st
+import threading
+import time
 
-# -----------------------------
-# Environment variables (safe)
-# -----------------------------
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-STRING_SESSION = os.environ.get("STRING_SESSION")
-TARGET_CHAT = os.environ.get("TARGET_CHAT")
+# --- Load environment variables ---
+load_dotenv()
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+STRING_SESSION = os.getenv("STRING_SESSION")
+TARGET_CHAT = os.getenv("TARGET_CHAT")
 
-R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID")
-R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY")
-R2_BUCKET = os.environ.get("R2_BUCKET")
-R2_ENDPOINT = os.environ.get("R2_ENDPOINT")
-# -----------------------------
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
+R2_BUCKET = os.getenv("R2_BUCKET")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 
-# Validate environment variables
-required_vars = [
-    "API_ID","API_HASH","STRING_SESSION","TARGET_CHAT",
-    "R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY","R2_BUCKET","R2_ENDPOINT"
-]
-for var in required_vars:
-    if not os.environ.get(var):
-        raise ValueError(f"Environment variable {var} is missing!")
-
-# -----------------------------
-# Telegram client setup
-# -----------------------------
+# --- Initialize Telegram client ---
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
-# Queue for live signals to show on Streamlit
-signal_queue = Queue()
-
-# Regex to parse signals
-SIGNAL_PATTERN = re.compile(
-    r"📌Current period ID: (\d+).*?🔔Result:(Win|Lose).*?🔜Next issue.*?📌period ID: (\d+).*?📲Trade: (🟢|🔴)✔️.*?Recommended quantity: x([\d\.]+)",
-    re.DOTALL
+# --- Initialize R2 S3 client ---
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id=R2_ACCESS_KEY_ID,
+    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+    endpoint_url=R2_ENDPOINT
 )
 
-# -----------------------------
-# Cloudflare R2 upload
-# -----------------------------
-async def upload_to_r2(filename: str, data: str):
-    url = f"{R2_ENDPOINT}/{filename}"
-    async with aiohttp.ClientSession() as session:
-        async with session.put(
-            url,
-            data=data.encode("utf-8"),
-            auth=aiohttp.BasicAuth(R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY),
-            headers={"Content-Type": "application/json"}
-        ) as resp:
-            if resp.status in [200, 201]:
-                print(f"[R2] Uploaded {filename} successfully")
-            else:
-                print(f"[R2] Failed to upload {filename}, status={resp.status}")
-                text = await resp.text()
-                print(f"Response: {text}")
+# --- Streamlit dashboard ---
+st.set_page_config(page_title="Coinryze ETH Signals", layout="wide")
+st.title("💹 Coinryze ETH Signals Dashboard")
+signal_container = st.empty()
+status_container = st.empty()
 
-# -----------------------------
-# Signal parser
-# -----------------------------
-async def handle_signal(message_text: str):
-    matches = SIGNAL_PATTERN.findall(message_text)
-    if not matches:
-        return
-    signals = []
-    for m in matches:
-        signal_data = {
-            "current_period": m[0],
-            "result": m[1],
-            "next_period": m[2],
-            "trade": m[3],
-            "quantity": m[4],
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        signals.append(signal_data)
-        # Add to live queue for Streamlit dashboard
-        signal_queue.put(signal_data)
-    if signals:
-        filename = f"signal_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.json"
-        await upload_to_r2(filename, json.dumps(signals, indent=2))
+# In-memory store of latest signals
+latest_signals = []
 
-# -----------------------------
-# Telegram listener
-# -----------------------------
+# --- Helper function to parse result (Win/Lose) ---
+def parse_result(message: str):
+    if "Win" in message:
+        return "Win", "🟢"
+    elif "Lose" in message:
+        return "Lose", "🔴"
+    else:
+        return "Pending", "🟡"
+
+# --- Telegram event handler ---
 @client.on(events.NewMessage(chats=TARGET_CHAT))
-async def signal_listener(event):
-    try:
-        await handle_signal(event.raw_text)
-    except Exception as e:
-        print(f"[Error] {e}")
+async def new_signal_handler(event):
+    message = event.message.message
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    result_text, icon = parse_result(message)
+    latest_signals.append({"time": timestamp, "message": message, "result": result_text, "icon": icon})
 
-async def telegram_runner():
-    await client.start()
-    print("[Telegram] Client started, listening for signals...")
-    await client.run_until_disconnected()
+    # Keep last 30 messages only
+    if len(latest_signals) > 30:
+        latest_signals.pop(0)
 
-# -----------------------------
-# Streamlit dashboard
-# -----------------------------
-st.set_page_config(page_title="Coinryze Signals", layout="wide")
-st.title("📊 Coinryze ETH 60s Signal Dashboard")
+    # Update Streamlit dashboard
+    df_display = "\n\n".join([f"{s['time']} {s['icon']} {s['result']}\n{s['message']}" for s in latest_signals])
+    signal_container.text(df_display)
 
-signal_container = st.container()
+    # Upload latest signals to R2 with retry
+    for attempt in range(3):
+        try:
+            s3_client.put_object(
+                Bucket=R2_BUCKET,
+                Key="latest_signals.json",
+                Body=json.dumps(latest_signals),
+                ContentType="application/json"
+            )
+            break
+        except Exception as e:
+            print(f"R2 upload error (attempt {attempt+1}):", e)
+            await asyncio.sleep(2)
 
-def streamlit_loop():
-    signals_list = []
+# --- Function to start Telegram client safely ---
+async def start_telegram():
     while True:
-        while not signal_queue.empty():
-            signal = signal_queue.get()
-            signals_list.append(signal)
-        with signal_container:
-            if signals_list:
-                st.subheader(f"Latest {len(signals_list)} signals")
-                st.table(signals_list[-20:][::-1])  # show last 20 signals
-        st.sleep(1)
+        try:
+            await client.start()
+            status_container.text("✅ Telegram connected")
+            await client.run_until_disconnected()
+        except errors.RPCError as e:
+            status_container.text(f"⚠️ Telegram disconnected, retrying... {e}")
+            print("Telegram RPC error, reconnecting:", e)
+            await asyncio.sleep(5)
+        except Exception as e:
+            status_container.text(f"⚠️ Telegram error, retrying... {e}")
+            print("Telegram unexpected error:", e)
+            await asyncio.sleep(5)
 
-# -----------------------------
-# Run Telegram client in background thread
-# -----------------------------
-def run_asyncio_loop(loop):
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(telegram_runner())
+# --- Run Telegram client in a background thread for Streamlit ---
+def run_telegram_loop():
+    asyncio.run(start_telegram())
 
-loop = asyncio.new_event_loop()
-t = Thread(target=run_asyncio_loop, args=(loop,), daemon=True)
-t.start()
+threading.Thread(target=run_telegram_loop, daemon=True).start()
 
-# -----------------------------
-# Run Streamlit UI
-# -----------------------------
-streamlit_loop()
+# --- Streamlit UI loop ---
+while True:
+    # Refresh dashboard every 3 seconds
+    time.sleep(3)
+    if latest_signals:
+        df_display = "\n\n".join([f"{s['time']} {s['icon']} {s['result']}\n{s['message']}" for s in latest_signals])
+        signal_container.text(df_display)
