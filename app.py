@@ -1,85 +1,105 @@
 import os
 import time
-import pandas as pd
-import streamlit as st
 import threading
+import pandas as pd
+import numpy as np
 import requests
+import streamlit as st
+import plotly.express as px
 from pyrogram import Client, filters
-from CloudFlare import CloudFlare
-from io import BytesIO
+from cloudflare import CloudFlare
 
-# ============ Environment Variables ============
-R2_BUCKET = os.getenv("R2_BUCKET")
-R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+# ===========================
+# Environment Variables
+# ===========================
+TELEGRAM_API_IDS = os.getenv("TELEGRAM_API_IDS", "").split(",")
+TELEGRAM_API_HASHES = os.getenv("TELEGRAM_API_HASHES", "").split(",")
+TELEGRAM_SESSIONS = os.getenv("TELEGRAM_SESSION", "").split(",")
 R2_KEY_ID = os.getenv("R2_KEY_ID")
 R2_SECRET = os.getenv("R2_SECRET")
-TELEGRAM_API_IDS = os.getenv("TELEGRAM_API_IDS").split(",")       # comma-separated
-TELEGRAM_API_HASHES = os.getenv("TELEGRAM_API_HASHES").split(",") # comma-separated
-TELEGRAM_SESSIONS = os.getenv("TELEGRAM_SESSION").split(",")      # comma-separated
+R2_BUCKET = os.getenv("R2_BUCKET")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 
-# ============ Cloudflare R2 Client ============
-cf_session = CloudFlare(email="", token=R2_KEY_ID)
+# ===========================
+# Telegram Listener
+# ===========================
+signals_df = pd.DataFrame(columns=["bot", "signal", "verified", "timestamp"])
 
-def upload_to_r2(filename, df):
-    buffer = BytesIO()
-    df.to_csv(buffer, index=False)
-    buffer.seek(0)
-    for attempt in range(3):
-        try:
-            cf_session.zones.r2.put(bucket_name=R2_BUCKET, key=filename, data=buffer)
-            break
-        except Exception as e:
-            time.sleep(2)
-            if attempt == 2:
-                print(f"Failed to upload {filename}: {e}")
+def start_telegram_listener(api_id, api_hash, session_name):
+    app = Client(session_name, api_id=int(api_id), api_hash=api_hash)
 
-# ============ Signal Storage ============
-try:
-    df_signals = pd.read_csv("signals.csv")
-except:
-    df_signals = pd.DataFrame(columns=["bot", "signal", "outcome", "timestamp"])
-
-# ============ Telegram Listener ============
-apps = []
-for i, session in enumerate(TELEGRAM_SESSIONS):
-    app = Client(session_name=session, api_id=int(TELEGRAM_API_IDS[i]), api_hash=TELEGRAM_API_HASHES[i])
-    apps.append(app)
-
-def start_listener(app):
-    @app.on_message(filters.channel)
-    def listener(client, message):
-        global df_signals
-        bot_name = client.me.username
-        signal_text = message.text
-        timestamp = pd.Timestamp.now()
-        # Dummy verification logic
-        outcome = "pending"
-        df_signals = pd.concat([df_signals, pd.DataFrame([{"bot": bot_name, "signal": signal_text, "outcome": outcome, "timestamp": timestamp}])], ignore_index=True)
-        df_signals.to_csv("signals.csv", index=False)
-        upload_to_r2("signals_backup.csv", df_signals)
+    @app.on_message(filters.private)
+    def handle_signal(client, message):
+        global signals_df
+        signals_df = pd.concat([
+            signals_df,
+            pd.DataFrame([{
+                "bot": session_name,
+                "signal": message.text,
+                "verified": False,
+                "timestamp": pd.Timestamp.now()
+            }])
+        ], ignore_index=True)
 
     app.run()
 
-# Run all Telegram listeners in threads
-for app in apps:
-    threading.Thread(target=start_listener, args=(app,), daemon=True).start()
+# ===========================
+# Cloudflare R2 Sync
+# ===========================
+def upload_to_r2(filename, data, retries=3):
+    cf = CloudFlare(email="", token=R2_SECRET)  # token auth
+    for attempt in range(retries):
+        try:
+            resp = cf.accounts.r2.put(
+                R2_BUCKET, filename, data=data.encode("utf-8")
+            )
+            if resp:
+                return True
+        except Exception as e:
+            print(f"R2 upload failed, retry {attempt+1}: {e}")
+            time.sleep(2)
+    print("Failed to upload to R2 after retries")
+    return False
 
-# ============ Streamlit Dashboard ============
-st.set_page_config(page_title="CoinRyze Live Dashboard", layout="wide")
-st.title("📊 CoinRyze Telegram Signals Dashboard")
+def backup_signals():
+    while True:
+        if not signals_df.empty:
+            csv_data = signals_df.to_csv(index=False)
+            upload_to_r2("signals_backup.csv", csv_data)
+        time.sleep(60)
 
-if df_signals.empty:
-    st.warning("No data yet. Waiting for signals...")
-else:
-    st.write(f"Last updated: {pd.Timestamp.now()}")
-    st.dataframe(df_signals)
+# ===========================
+# Start Telegram Threads
+# ===========================
+for i, (api_id, api_hash, session) in enumerate(zip(TELEGRAM_API_IDS, TELEGRAM_API_HASHES, TELEGRAM_SESSIONS)):
+    threading.Thread(target=start_telegram_listener, args=(api_id, api_hash, session), daemon=True).start()
 
-    # Accuracy leaderboard
-    leaderboard = df_signals.groupby("bot").apply(lambda x: (x.outcome=="win").sum() / max(1,len(x))*100).reset_index(name="accuracy")
-    st.subheader("Bot Accuracy Leaderboard (%)")
-    st.dataframe(leaderboard.sort_values("accuracy", ascending=False))
+# Start backup thread
+threading.Thread(target=backup_signals, daemon=True).start()
 
-st.write("Auto-refresh every 5 seconds...")
-st_autorefresh = st.experimental_rerun
-time.sleep(5)
-st.experimental_rerun()
+# ===========================
+# Streamlit Dashboard
+# ===========================
+st.set_page_config(page_title="CoinRyze Tracker", layout="wide")
+st.title("📊 Live Telegram Signals Dashboard")
+
+placeholder = st.empty()
+
+while True:
+    df_copy = signals_df.copy()
+    if df_copy.empty:
+        placeholder.text("No data yet. Waiting for signals...")
+    else:
+        # Rolling accuracy (example)
+        df_copy["verified_numeric"] = df_copy["verified"].astype(int)
+        acc = df_copy.groupby("bot")["verified_numeric"].mean().reset_index()
+        acc.columns = ["Bot", "Rolling Accuracy"]
+        fig = px.bar(acc, x="Bot", y="Rolling Accuracy", range_y=[0,1], text_auto=True)
+        placeholder.plotly_chart(fig, use_container_width=True)
+
+        # Heatmap example
+        heatmap_data = pd.crosstab(df_copy["bot"], df_copy["signal"])
+        fig2 = px.imshow(heatmap_data, text_auto=True, aspect="auto")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    time.sleep(5)
