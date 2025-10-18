@@ -1,96 +1,97 @@
-# coinryze_tracker.py
-import os, asyncio, random
-from datetime import datetime
+import os
+import time
+import threading
 import pandas as pd
 import streamlit as st
-from telethon import TelegramClient, events
-from cloudflare import CloudFlare
+import numpy as np
+from CloudFlare import CloudFlare
+from pyrogram import Client, filters
+import requests
+import plotly.express as px
 
-# ------------------- ENV VARIABLES -------------------
+# --- ENV VARIABLES ---
 R2_BUCKET = os.getenv("R2_BUCKET")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_KEY_ID = os.getenv("R2_KEY_ID")
 R2_SECRET = os.getenv("R2_SECRET")
-TELEGRAM_API_IDS = [int(x) for x in os.getenv("TELEGRAM_API_IDS", "").split(",")]
-TELEGRAM_API_HASHES = os.getenv("TELEGRAM_API_HASHES", "").split(",")
-TELEGRAM_SESSIONS = os.getenv("TELEGRAM_SESSION", "").split(",")
+TELEGRAM_API_IDS = os.getenv("TELEGRAM_API_IDS").split(",")
+TELEGRAM_API_HASHES = os.getenv("TELEGRAM_API_HASHES").split(",")
+TELEGRAM_SESSIONS = os.getenv("TELEGRAM_SESSION").split(",")
 
-# ------------------- CLOUD R2 UPLOAD -------------------
-import boto3
-s3 = boto3.client(
-    "s3",
-    endpoint_url=R2_ENDPOINT,
-    aws_access_key_id=R2_KEY_ID,
-    aws_secret_access_key=R2_SECRET
-)
+# --- GLOBAL DATA ---
+signals_df = pd.DataFrame(columns=["bot","signal","verified","time"])
+lock = threading.Lock()
 
-def upload_to_r2(file_name, data):
-    for attempt in range(3):
+# --- CLOUD FLARE R2 SYNC ---
+cf = CloudFlare(token=R2_SECRET)
+
+def upload_r2_file(filename, retries=3):
+    for attempt in range(retries):
         try:
-            s3.put_object(Bucket=R2_BUCKET, Key=file_name, Body=data.encode())
+            with open(filename, "rb") as f:
+                cf.r2.put_object(R2_BUCKET, filename, data=f.read())
             return True
         except Exception as e:
-            print(f"R2 upload attempt {attempt+1} failed:", e)
+            print(f"R2 upload failed attempt {attempt+1}: {e}")
+            time.sleep(2)
+    print(f"Failed to upload {filename} after {retries} attempts.")
     return False
 
-def download_from_r2(file_name):
-    try:
-        obj = s3.get_object(Bucket=R2_BUCKET, Key=file_name)
-        return obj['Body'].read().decode()
-    except:
-        return None
+# --- TELEGRAM LISTENER ---
+def start_bot(session_name, api_id, api_hash):
+    app = Client(session_name, api_id=int(api_id), api_hash=api_hash)
 
-# ------------------- STREAMLIT DASHBOARD -------------------
-st.set_page_config(page_title="CoinRyze Tracker", layout="wide")
-st.title("📊 Live Telegram Signals Dashboard")
+    @app.on_message(filters.private)
+    def handle_signal(client, message):
+        signal = message.text
+        bot_name = session_name
+        verified = False  # placeholder verification logic
+        with lock:
+            global signals_df
+            signals_df = pd.concat([signals_df, pd.DataFrame([{
+                "bot": bot_name,
+                "signal": signal,
+                "verified": verified,
+                "time": pd.Timestamp.now()
+            }])], ignore_index=True)
+            # save backup
+            signals_df.to_csv("signals_backup.csv", index=False)
+            upload_r2_file("signals_backup.csv")
 
-if "signals_df" not in st.session_state:
-    st.session_state.signals_df = pd.DataFrame(columns=["timestamp","bot","signal","verified","outcome"])
+    app.run()
 
-def update_dashboard(signal_data):
-    df = st.session_state.signals_df
-    df = pd.concat([df, pd.DataFrame([signal_data], columns=df.columns)], ignore_index=True)
-    st.session_state.signals_df = df
-    st.dataframe(df.tail(20))
-    upload_to_r2("signals.csv", df.to_csv(index=False))
+# Start all bots in separate threads
+for i, session in enumerate(TELEGRAM_SESSIONS):
+    t = threading.Thread(target=start_bot, args=(session, TELEGRAM_API_IDS[i], TELEGRAM_API_HASHES[i]))
+    t.start()
 
-# ------------------- TELEGRAM LISTENER -------------------
-async def start_telegram():
-    clients = []
-    for idx, session in enumerate(TELEGRAM_SESSIONS):
-        client = TelegramClient(session, TELEGRAM_API_IDS[idx], TELEGRAM_API_HASHES[idx])
-        await client.start()
-        clients.append(client)
+# --- STREAMLIT DASHBOARD ---
+st.set_page_config(page_title="CoinRyze Live Dashboard", layout="wide")
+st.title("📊 CoinRyze Live Telegram Signals Dashboard")
 
-        @client.on(events.NewMessage)
-        async def handler(event, bot_idx=idx):
-            msg = event.message.message
-            signal_data = [
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                f"Bot_{bot_idx+1}",
-                msg,
-                False,
-                ""
-            ]
-            update_dashboard(signal_data)
+last_update = st.empty()
+data_area = st.empty()
 
-    await asyncio.gather(*[c.run_until_disconnected() for c in clients])
+def dashboard_loop():
+    while True:
+        with lock:
+            df = signals_df.copy()
+        if df.empty:
+            data_area.text("No data yet. Waiting for signals...")
+        else:
+            # Show leaderboard
+            leaderboard = df.groupby("bot")["verified"].mean().sort_values(ascending=False).reset_index()
+            leaderboard.columns = ["Bot", "Accuracy"]
+            st.subheader("Bot Accuracy Leaderboard")
+            st.table(leaderboard)
 
-# ------------------- LOAD EXISTING SIGNALS -------------------
-existing_csv = download_from_r2("signals.csv")
-if existing_csv:
-    st.session_state.signals_df = pd.read_csv(pd.compat.StringIO(existing_csv))
+            # Show heatmap of signals per bot
+            heatmap_data = df.pivot_table(index="bot", columns="signal", aggfunc="size", fill_value=0)
+            fig = px.imshow(heatmap_data, text_auto=True, aspect="auto", title="Signals Heatmap per Bot")
+            st.plotly_chart(fig, use_container_width=True)
 
-# ------------------- RUN TELEGRAM IN BACKGROUND -------------------
-async def main_loop():
-    try:
-        await start_telegram()
-    except Exception as e:
-        print("Telegram listener error:", e)
+        last_update.text(f"Last updated: {pd.Timestamp.now()}")
+        time.sleep(5)
 
-# ------------------- STREAMLIT AUTO REFRESH -------------------
-st.write(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-st.button("Force refresh", on_click=lambda: None)
-
-# Run asyncio in background
-asyncio.run(main_loop())
+# Start dashboard loop in background
+threading.Thread(target=dashboard_loop, daemon=True).start()
