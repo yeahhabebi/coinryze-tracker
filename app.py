@@ -1,100 +1,140 @@
-import os
-import pandas as pd
-import streamlit as st
-import requests
-from telethon import TelegramClient, events
+import os, asyncio, threading, random, time
 from datetime import datetime
-from io import BytesIO
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+import streamlit as st
+import pandas as pd
 import boto3
-import threading
+from io import BytesIO
 
-# -----------------------
-# CONFIGURATION (replace placeholders!)
-# -----------------------
-API_ID = 123456  # <-- Your Telegram API ID
-API_HASH = "abcdef123456"  # <-- Your Telegram API Hash
-SESSION_NAME = "coinryze_session"
+# =======================
+# Environment Variables (set these in Render Dashboard)
+# =======================
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+STRING_SESSION = os.getenv("STRING_SESSION")
+TARGET_CHAT = os.getenv("TARGET_CHAT", "@ETHGPT60s_bot")
 
-R2_KEY_ID = "your_r2_key_id"
-R2_SECRET = "your_r2_secret"
-R2_BUCKET = "your_bucket_name"
-R2_ENDPOINT = "https://<account_id>.r2.cloudflarestorage.com"
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
+R2_BUCKET = os.getenv("R2_BUCKET")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 
-COINRYZE_URL = "https://www.coinryze.org/api/latest-draws"
+# =======================
+# Initialize Cloudflare R2 (S3-compatible)
+# =======================
+r2 = boto3.client(
+    "s3",
+    endpoint_url=R2_ENDPOINT,
+    aws_access_key_id=R2_ACCESS_KEY_ID,
+    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+)
 
-# -----------------------
-# TELEGRAM CLIENT
-# -----------------------
-client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-draws_data = []
+# =======================
+# Streamlit App State
+# =======================
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "accuracy" not in st.session_state:
+    st.session_state.accuracy = []
+if "connected" not in st.session_state:
+    st.session_state.connected = False
 
-@client.on(events.NewMessage(chats='@coinryze_channel'))
+# =======================
+# Helper Functions
+# =======================
+def verify_signal(text: str) -> bool:
+    """Simple example verification"""
+    return "WIN" in text.upper() or "🎉" in text
+
+def get_color(sender):
+    random.seed(hash(sender))
+    hue = random.randint(0, 360)
+    return f"hsl({hue},70%,80%)"
+
+def format_message(msg):
+    ts = msg["time"].strftime("%H:%M:%S")
+    color = get_color(msg["sender"])
+    return f"""
+    <div style="background:{color};padding:10px;border-radius:10px;
+    margin-bottom:6px;max-width:80%;word-wrap:break-word;">
+        <b>{msg['sender']}</b>
+        <span style="font-size:10px;color:#555">#{msg['id']} • {ts}</span><br>
+        {msg['text']}
+    </div>
+    """
+
+def backup_to_r2(data, filename=None):
+    try:
+        if not filename:
+            filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        r2.put_object(Bucket=R2_BUCKET, Key=filename, Body=data.encode())
+    except Exception as e:
+        print("⚠️ R2 backup failed:", e)
+
+# =======================
+# Telegram Client Setup
+# =======================
+client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
+
+@client.on(events.NewMessage(chats=TARGET_CHAT))
 async def handler(event):
     text = event.message.message
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    draws_data.append({"time": timestamp, "message": text})
-    print(f"[{timestamp}] {text}")
+    verified = verify_signal(text)
+    msg = {
+        "id": event.id,
+        "sender": "CoinRyze Bot",
+        "text": text + (" ✅" if verified else " ❌"),
+        "time": datetime.now(),
+        "verified": verified,
+    }
+    st.session_state.messages.append(msg)
+    st.session_state.accuracy.append(verified)
+    backup_to_r2(str(msg), f"{TARGET_CHAT}_{event.id}.txt")
 
-def run_telegram():
-    client.start()
-    client.run_until_disconnected()
+async def start_client():
+    await client.start()
+    st.session_state.connected = True
+    print("✅ Telegram listener connected")
+    await client.run_until_disconnected()
 
-threading.Thread(target=run_telegram, daemon=True).start()
+def run_client_thread():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_client())
 
-# -----------------------
-# CLOUD R2 UPLOAD
-# -----------------------
-def upload_to_r2(df, filename="draws.csv"):
-    session = boto3.session.Session()
-    client_r2 = session.client(
-        's3',
-        region_name='auto',
-        endpoint_url=R2_ENDPOINT,
-        aws_access_key_id=R2_KEY_ID,
-        aws_secret_access_key=R2_SECRET
-    )
-    csv_buffer = BytesIO()
-    df.to_csv(csv_buffer, index=False)
-    client_r2.put_object(Bucket=R2_BUCKET, Key=filename, Body=csv_buffer.getvalue())
-    print(f"Uploaded {filename} to R2 bucket {R2_BUCKET}")
+if not st.session_state.connected:
+    threading.Thread(target=run_client_thread, daemon=True).start()
 
-# -----------------------
-# COINRYZE DATA FETCHER
-# -----------------------
-def fetch_latest_draws():
-    try:
-        resp = requests.get(COINRYZE_URL)
-        if resp.status_code == 200:
-            data = resp.json()
-            df = pd.DataFrame(data)
-            return df
-        return pd.DataFrame()
-    except Exception as e:
-        print("Fetch error:", e)
-        return pd.DataFrame()
+# =======================
+# Streamlit Dashboard
+# =======================
+st.set_page_config(page_title="📊 CoinRyze Signals Dashboard", layout="wide")
+st.title("📊 CoinRyze Signals Dashboard")
+st.caption("Live CoinRyze Telegram signals, verification & analytics")
 
-# -----------------------
-# STREAMLIT DASHBOARD
-# -----------------------
-st.set_page_config(page_title="CoinRyze Tracker", layout="wide")
-st.title("🟢 CoinRyze Live Tracker")
+chat_col, stat_col = st.columns([2,1])
 
-st.subheader("Latest Draws")
-df_draws = fetch_latest_draws()
-if not df_draws.empty:
-    st.dataframe(df_draws)
-else:
-    st.info("No data fetched yet.")
+# Live Chat
+with chat_col:
+    st.markdown("### 💬 Live Messages")
+    for msg in st.session_state.messages[-50:]:
+        st.markdown(format_message(msg), unsafe_allow_html=True)
 
-st.subheader("Telegram Messages")
-if draws_data:
-    st.dataframe(pd.DataFrame(draws_data))
-else:
-    st.info("No Telegram messages captured yet.")
+# Leaderboard / Stats
+with stat_col:
+    st.markdown("### 📈 Bot Accuracy")
+    total = len(st.session_state.accuracy)
+    acc = (sum(st.session_state.accuracy)/total*100) if total else 0
+    st.metric("Overall Accuracy", f"{acc:.2f}%", f"{total} signals")
+    if total:
+        df = pd.DataFrame({"Result": st.session_state.accuracy})
+        df["Cumulative %"] = df["Result"].expanding().mean()*100
+        st.line_chart(df["Cumulative %"], use_container_width=True)
 
-if st.button("Upload CSV to Cloudflare R2"):
-    if not df_draws.empty:
-        upload_to_r2(df_draws)
-        st.success("Uploaded successfully!")
-    else:
-        st.warning("No data to upload.")
+st.caption("🔄 Auto-refreshing every 3 seconds")
+
+# Safe periodic refresh (no infinite loop)
+st_autorefresh = st.empty()
+time.sleep(3)
+st.rerun()
