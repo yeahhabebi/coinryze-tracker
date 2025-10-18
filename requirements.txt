@@ -1,4 +1,6 @@
-streamlit==1.39.0
-telethon==1.36.0
-boto3==1.35.30
-pandas==2.2.3
+streamlit==1.29.0
+telethon==1.28.0
+aiohttp==3.9.9
+python-dotenv==1.0.0
+pandas==2.1.0
+boto3==1.28.20
