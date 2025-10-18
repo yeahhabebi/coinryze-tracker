@@ -1,7 +1,6 @@
-fastapi
-uvicorn
-streamlit
-telethon
-pandas
-requests
-python-multipart
+streamlit==1.26.0
+telethon==1.30.0
+boto3==1.28.0
+pandas==2.2.0
+matplotlib==3.8.0
+seaborn==0.12.2
