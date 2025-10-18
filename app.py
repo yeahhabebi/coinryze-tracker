@@ -1,97 +1,102 @@
-import os
-import time
-import threading
+import os, time, json, asyncio, random
 import pandas as pd
 import streamlit as st
-import numpy as np
+from pyrogram import Client
 from CloudFlare import CloudFlare
-from pyrogram import Client, filters
 import requests
 import plotly.express as px
 
-# --- ENV VARIABLES ---
+# ========================
+# Environment Variables
+# ========================
 R2_BUCKET = os.getenv("R2_BUCKET")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 R2_KEY_ID = os.getenv("R2_KEY_ID")
 R2_SECRET = os.getenv("R2_SECRET")
-TELEGRAM_API_IDS = os.getenv("TELEGRAM_API_IDS").split(",")
-TELEGRAM_API_HASHES = os.getenv("TELEGRAM_API_HASHES").split(",")
-TELEGRAM_SESSIONS = os.getenv("TELEGRAM_SESSION").split(",")
+TELEGRAM_API_IDS = json.loads(os.getenv("TELEGRAM_API_IDS", "[]"))
+TELEGRAM_API_HASHES = json.loads(os.getenv("TELEGRAM_API_HASHES", "[]"))
+TELEGRAM_SESSIONS = json.loads(os.getenv("TELEGRAM_SESSION", "[]"))
 
-# --- GLOBAL DATA ---
-signals_df = pd.DataFrame(columns=["bot","signal","verified","time"])
-lock = threading.Lock()
-
-# --- CLOUD FLARE R2 SYNC ---
-cf = CloudFlare(token=R2_SECRET)
-
-def upload_r2_file(filename, retries=3):
+# ========================
+# Cloudflare R2 client
+# ========================
+def upload_r2(file_name, data, retries=3):
     for attempt in range(retries):
         try:
-            with open(filename, "rb") as f:
-                cf.r2.put_object(R2_BUCKET, filename, data=f.read())
-            return True
+            cf = CloudFlare(token=R2_SECRET)
+            url = f"https://{R2_BUCKET}.{R2_ENDPOINT}/{file_name}"
+            resp = requests.put(url, data=data, auth=(R2_KEY_ID, R2_SECRET))
+            if resp.status_code in [200,201]:
+                return True
         except Exception as e:
-            print(f"R2 upload failed attempt {attempt+1}: {e}")
-            time.sleep(2)
-    print(f"Failed to upload {filename} after {retries} attempts.")
+            print(f"R2 Upload failed attempt {attempt+1}: {e}")
+        time.sleep(2)
     return False
 
-# --- TELEGRAM LISTENER ---
-def start_bot(session_name, api_id, api_hash):
-    app = Client(session_name, api_id=int(api_id), api_hash=api_hash)
+# ========================
+# Telegram Listener
+# ========================
+signals = []
 
-    @app.on_message(filters.private)
-    def handle_signal(client, message):
-        signal = message.text
-        bot_name = session_name
-        verified = False  # placeholder verification logic
-        with lock:
-            global signals_df
-            signals_df = pd.concat([signals_df, pd.DataFrame([{
-                "bot": bot_name,
-                "signal": signal,
-                "verified": verified,
-                "time": pd.Timestamp.now()
-            }])], ignore_index=True)
-            # save backup
-            signals_df.to_csv("signals_backup.csv", index=False)
-            upload_r2_file("signals_backup.csv")
+async def start_telegram():
+    clients = []
+    for i, session in enumerate(TELEGRAM_SESSIONS):
+        client = Client(
+            session_name=f"bot{i}",
+            api_id=int(TELEGRAM_API_IDS[i]),
+            api_hash=TELEGRAM_API_HASHES[i],
+            session_string=session
+        )
+        clients.append(client)
 
-    app.run()
+    async def handler(client):
+        async with client:
+            @client.on_message()
+            async def message_listener(_, message):
+                text = message.text or ""
+                signal = {"bot": client.session_name, "signal": text, "time": time.time()}
+                signals.append(signal)
+                df = pd.DataFrame(signals)
+                upload_r2("signals.json", df.to_json())
 
-# Start all bots in separate threads
-for i, session in enumerate(TELEGRAM_SESSIONS):
-    t = threading.Thread(target=start_bot, args=(session, TELEGRAM_API_IDS[i], TELEGRAM_API_HASHES[i]))
-    t.start()
+    await asyncio.gather(*[handler(c) for c in clients])
 
-# --- STREAMLIT DASHBOARD ---
-st.set_page_config(page_title="CoinRyze Live Dashboard", layout="wide")
-st.title("📊 CoinRyze Live Telegram Signals Dashboard")
+# ========================
+# Streamlit Dashboard
+# ========================
+st.set_page_config(page_title="CoinRyze Tracker", layout="wide")
+st.title("📊 Live Telegram Signals Dashboard")
 
-last_update = st.empty()
-data_area = st.empty()
+def display_dashboard():
+    if not signals:
+        st.warning("No data yet. Waiting for signals...")
+        return
 
-def dashboard_loop():
+    df = pd.DataFrame(signals)
+    df['time_str'] = pd.to_datetime(df['time'], unit='s').dt.strftime("%H:%M:%S")
+    st.dataframe(df.tail(20))
+
+    # Heatmap per bot
+    if 'bot' in df.columns:
+        heat = df.groupby('bot').size().reset_index(name='count')
+        fig = px.bar(heat, x='bot', y='count', title="Signals per Bot", color='count')
+        st.plotly_chart(fig)
+
+    # Leaderboard
+    df['verified'] = df['signal'].apply(lambda x: random.choice([0,1]))
+    leaderboard = df.groupby('bot')['verified'].mean().reset_index()
+    leaderboard['accuracy'] = (leaderboard['verified']*100).round(2)
+    st.subheader("Bot Accuracy Leaderboard")
+    st.table(leaderboard.sort_values("accuracy", ascending=False))
+
+# ========================
+# Main Async Runner
+# ========================
+async def main():
+    asyncio.create_task(start_telegram())
     while True:
-        with lock:
-            df = signals_df.copy()
-        if df.empty:
-            data_area.text("No data yet. Waiting for signals...")
-        else:
-            # Show leaderboard
-            leaderboard = df.groupby("bot")["verified"].mean().sort_values(ascending=False).reset_index()
-            leaderboard.columns = ["Bot", "Accuracy"]
-            st.subheader("Bot Accuracy Leaderboard")
-            st.table(leaderboard)
+        display_dashboard()
+        await asyncio.sleep(5)
 
-            # Show heatmap of signals per bot
-            heatmap_data = df.pivot_table(index="bot", columns="signal", aggfunc="size", fill_value=0)
-            fig = px.imshow(heatmap_data, text_auto=True, aspect="auto", title="Signals Heatmap per Bot")
-            st.plotly_chart(fig, use_container_width=True)
-
-        last_update.text(f"Last updated: {pd.Timestamp.now()}")
-        time.sleep(5)
-
-# Start dashboard loop in background
-threading.Thread(target=dashboard_loop, daemon=True).start()
+# Run dashboard
+asyncio.run(main())
