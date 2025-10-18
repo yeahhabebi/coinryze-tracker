@@ -1,106 +1,75 @@
-import os
+# app.py
 import asyncio
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime
-from telethon import TelegramClient, events
-from minio import Minio
 import threading
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+import streamlit as st
 import time
 
-# --- Fix Python 3.13 event loop issue ---
-try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+# =======================
+# Telegram Credentials
+# =======================
+API_ID = 11345160
+API_HASH = "2912d1786520d56f2b0df8be2f0a8616"
+STRING_SESSION = "1BVtsOJgBu4mVFFnw9DrbLHpfSir4AFF8nqf1Nl3-KedXp-WdfyCNwbw6x2aUtIX-YiK5r_tXzrd_aq6Cw9YJNvlaBIKAIA6XZro37UaxxRBc9LcdnKKz2DNTe3HKSp3QU71-7vdD6vpMR0gmWLWrTj8Eknm5t5fgVEaR4lk_VwhHDsI_hRvQFpoYFPCBtRj5aQosTS0kf5KR2pWHcyWMbaVN4s2fAsuMZ5CLykvbKdFlyHTuSBzQBHRuwRvotBW8fIf3NodWmZCn7i5e8jmtg7G8okkDD_oMpHrWGoXyjK67jm0oMztiPOIxS70NFSPPcQ6VZ2gpB67f1lI1y2W0hQckeyG5VW8="
 
-# --- Environment Config ---
-API_ID = int(os.getenv("API_ID", "123456"))
-API_HASH = os.getenv("API_HASH", "your_api_hash")
+# =======================
+# Initialize Telegram Client
+# =======================
+client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
-R2_ENDPOINT = os.getenv("R2_ENDPOINT", "https://your-r2-endpoint")
-R2_BUCKET = os.getenv("R2_BUCKET", "coinryze-tracker")
-R2_KEY_ID = os.getenv("R2_KEY_ID", "your_key_id")
-R2_SECRET = os.getenv("R2_SECRET", "your_secret")
+# =======================
+# Streamlit State
+# =======================
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-DATA_FILE = "signals.csv"
+if "thread_started" not in st.session_state:
+    st.session_state.thread_started = False
 
-# --- Initialize R2 Client ---
-r2 = Minio(
-    R2_ENDPOINT.replace("https://", "").replace("http://", ""),
-    access_key=R2_KEY_ID,
-    secret_key=R2_SECRET,
-    secure=True
-)
+# =======================
+# Telegram listener function
+# =======================
+@client.on(events.NewMessage)
+async def handler(event):
+    sender = await event.get_sender()
+    name = sender.first_name if sender else str(event.sender_id)
+    text = event.text
+    # Add message to Streamlit state
+    st.session_state.messages.append({"sender": name, "text": text})
 
-# --- Load existing messages ---
-if os.path.exists(DATA_FILE):
-    df = pd.read_csv(DATA_FILE)
-else:
-    df = pd.DataFrame(columns=["timestamp", "message"])
+# =======================
+# Function to run client in background
+# =======================
+def run_client():
+    client.start()
+    client.run_until_disconnected()
 
-# --- Initialize Telegram (personal session) ---
-# Make sure telethon.session file is uploaded in the same folder
-tg_client = TelegramClient("telethon", API_ID, API_HASH)
+# =======================
+# Start Telegram listener in background thread
+# =======================
+if not st.session_state.thread_started:
+    threading.Thread(target=run_client, daemon=True).start()
+    st.session_state.thread_started = True
 
-# --- Define message handler ---
-@tg_client.on(events.NewMessage)
-async def new_message_handler(event):
-    global df
-    msg = event.raw_text.strip()
-    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    new_row = pd.DataFrame([[ts, msg]], columns=["timestamp", "message"])
-    df = pd.concat([df, new_row], ignore_index=True)
-    df.to_csv(DATA_FILE, index=False)
-    try:
-        r2.fput_object(R2_BUCKET, "signals.csv", DATA_FILE)
-    except Exception as e:
-        print("⚠️ R2 upload failed:", e)
+# =======================
+# Streamlit UI
+# =======================
+st.set_page_config(page_title="📲 Coinryze Telegram Tracker", page_icon="📩", layout="wide")
+st.title("📲 Coinryze Telegram Tracker")
 
-# --- Background Telegram Listener Thread ---
-def run_telegram_listener():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(tg_client.start())
-    print("✅ Telegram client started (persistent background mode)")
-    loop.run_until_complete(tg_client.run_until_disconnected())
+st.subheader("Live Telegram Messages")
 
-thread = threading.Thread(target=run_telegram_listener, daemon=True)
-thread.start()
+# Chat container
+chat_container = st.container()
 
-# --- Streamlit Dashboard ---
-st.set_page_config(page_title="CoinRyze Tracker", layout="wide")
-st.title("📡 CoinRyze Tracker — Live Telegram Feed + Cloudflare R2 Sync")
-
-st.sidebar.header("⚙️ Controls")
-if st.sidebar.button("🔄 Manual Sync to R2"):
-    try:
-        if os.path.exists(DATA_FILE):
-            r2.fput_object(R2_BUCKET, "signals.csv", DATA_FILE)
-            st.sidebar.success("✅ Synced to R2 successfully!")
-        else:
-            st.sidebar.warning("No data file found yet.")
-    except Exception as e:
-        st.sidebar.error(f"Sync failed: {e}")
-
-# --- Live Data View ---
-st.markdown("### 📨 Latest Telegram Messages")
-st.dataframe(df.tail(25), use_container_width=True)
-
-if not df.empty:
-    st.markdown("### 📈 Message Frequency Over Time")
-    freq = (
-        df.groupby(df["timestamp"].str[:16])
-        .size()
-        .reset_index(name="count")
-        .rename(columns={"timestamp": "minute"})
-    )
-    fig = px.line(freq, x="minute", y="count", title="Messages per Minute")
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("No Telegram messages yet — waiting for new updates...")
-
-# --- Keep background thread alive ---
+# Auto-refresh every 1.5 seconds
 while True:
-    time.sleep(5)
+    with chat_container:
+        for msg in st.session_state.messages[-50:]:  # show last 50 messages
+            st.markdown(f"**{msg['sender']}**: {msg['text']}")
+        # Auto-scroll to latest message
+        st.markdown("<div style='height:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+
+    time.sleep(1.5)
+    st.experimental_rerun()
